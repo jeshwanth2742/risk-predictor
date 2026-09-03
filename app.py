@@ -300,7 +300,11 @@ if submitted:
     try:
         with result_col:
             with st.spinner("Scoring applicant..."):
-                resp = requests.post(f"{API_URL}/predict", json=payload, timeout=10)
+                resp = requests.post(
+    f"{API_URL}/predict",
+    json=payload,
+    timeout=60
+)
                 resp.raise_for_status()
                 result = resp.json()
     except requests.exceptions.ConnectionError:
