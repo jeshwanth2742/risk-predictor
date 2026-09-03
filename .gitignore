@@ -1,0 +1,27 @@
+# Data (real dataset should not be committed; provide it locally)
+data/credit_data.csv
+data/sample_synthetic_data.csv
+
+# Trained artifacts (regenerate via train_model.py)
+models/*.joblib
+models/metrics.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Streamlit
+.streamlit/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
