@@ -1,20 +1,5 @@
-"""
-app.py
--------
-Streamlit frontend for the Explainable Credit Risk Predictor.
 
-Presents a form for applicant details, calls the FastAPI backend's
-/predict endpoint, and displays the risk score plus a SHAP-based
-waterfall/bar chart showing exactly which factors pushed THIS
-applicant's score up or down.
 
-Run (with the API already running separately):
-    streamlit run app.py
-
-NOTE: This file only redesigns the presentation layer (now a tabbed
-layout instead of side-by-side panels). All ML/API logic, payload
-construction, response handling, and SHAP computation calls are
-functionally identical to the original implementation.
 """
 import os
 import requests
@@ -24,328 +9,46 @@ import numpy as np
 
 API_URL = os.environ.get("CREDIT_API_URL", "http://localhost:8000")
 
-st.set_page_config(
-    page_title="Explainable Credit Risk Predictor",
-    page_icon="◈",
-    layout="wide",
-    initial_sidebar_state="collapsed",
+st.set_page_config(page_title="Explainable Credit Risk Predictor", layout="centered")
+
+st.title("📊 Explainable Credit Risk / Loan Default Predictor")
+st.caption(
+    "Enter applicant details below. The risk score and every explanation "
+    "factor come directly from a trained XGBoost model and real SHAP "
+    "values computed for this specific applicant — nothing here is "
+    "hardcoded."
 )
 
-# --------------------------------------------------------------------------
-# Global styling — fintech / SaaS dashboard aesthetic
-# --------------------------------------------------------------------------
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap');
+with st.form("applicant_form"):
+    st.subheader("Applicant Details")
 
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-
-    .block-container {
-        padding-top: 1.2rem;
-        padding-bottom: 1.2rem;
-        max-width: 1100px;
-    }
-
-    :root {
-        --ink: #0f172a;
-        --sub: #64748b;
-        --line: #e2e8f0;
-        --card: #ffffff;
-        --accent: #4338ca;
-        --accent-soft: #eef2ff;
-        --danger: #dc2626;
-        --danger-soft: #fef2f2;
-        --warn: #d97706;
-        --warn-soft: #fffbeb;
-        --good: #059669;
-        --good-soft: #ecfdf5;
-    }
-
-    .app-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 14px 22px;
-        background: var(--ink);
-        border-radius: 14px;
-        margin-bottom: 16px;
-    }
-    .app-header .brand {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-    .app-header .mark {
-        width: 34px; height: 34px;
-        border-radius: 9px;
-        background: linear-gradient(135deg, #6366f1, #4338ca);
-        display: flex; align-items: center; justify-content: center;
-        font-weight: 800; color: white; font-size: 15px;
-    }
-    .app-header h1 {
-        color: white; font-size: 16px; font-weight: 700; margin: 0; letter-spacing: 0.2px;
-    }
-    .app-header .sub {
-        color: #94a3b8; font-size: 11.5px; margin: 0; font-weight: 500;
-    }
-    .app-header .tag {
-        background: rgba(99,102,241,0.18);
-        color: #a5b4fc;
-        font-size: 10.5px;
-        font-weight: 600;
-        padding: 5px 10px;
-        border-radius: 20px;
-        border: 1px solid rgba(99,102,241,0.3);
-        letter-spacing: 0.3px;
-    }
-
-    .panel {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        padding: 18px 20px;
-        margin-bottom: 14px;
-    }
-    .panel-title {
-        font-size: 12px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.6px;
-        color: var(--sub);
-        margin-bottom: 12px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-
-    /* Top-level navigation tabs (Applicant Profile / Risk Assessment) */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 4px;
-        background: #f1f5f9;
-        padding: 5px;
-        border-radius: 12px;
-        margin-bottom: 16px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 40px;
-        border-radius: 8px;
-        font-weight: 700;
-        font-size: 13px;
-        color: var(--sub);
-        padding: 0 18px;
-    }
-    .stTabs [aria-selected="true"] {
-        background: var(--ink) !important;
-        color: white !important;
-    }
-
-    /* Inner tabs (Personal & Income / Credit History) keep a lighter style */
-    div[data-testid="stForm"] .stTabs [data-baseweb="tab-list"] {
-        background: transparent;
-        padding: 0;
-        border-bottom: 1px solid var(--line);
-        border-radius: 0;
-        margin-bottom: 14px;
-    }
-    div[data-testid="stForm"] .stTabs [data-baseweb="tab"] {
-        background: transparent !important;
-        color: var(--sub);
-        border-radius: 0;
-    }
-    div[data-testid="stForm"] .stTabs [aria-selected="true"] {
-        background: transparent !important;
-        color: var(--accent) !important;
-        border-bottom: 2px solid var(--accent);
-    }
-
-    div[data-testid="stForm"] {
-        border: none;
-        padding: 0;
-    }
-
-    .stNumberInput input, .stSlider {
-        font-size: 13.5px;
-    }
-    label[data-testid="stWidgetLabel"] p {
-        font-size: 12.5px !important;
-        font-weight: 600 !important;
-        color: #334155 !important;
-    }
-
-    div[data-testid="stFormSubmitButton"] button {
-        background: var(--ink) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 10px !important;
-        padding: 10px 0 !important;
-        font-weight: 700 !important;
-        font-size: 13.5px !important;
-        letter-spacing: 0.3px;
-        transition: all 0.15s ease;
-    }
-    div[data-testid="stFormSubmitButton"] button:hover {
-        background: var(--accent) !important;
-        transform: translateY(-1px);
-        box-shadow: 0 6px 16px rgba(67,56,202,0.28);
-    }
-
-    .score-card {
-        border-radius: 16px;
-        padding: 22px 24px;
-        text-align: center;
-        border: 1px solid var(--line);
-    }
-    .score-card .score-num {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 42px;
-        font-weight: 700;
-        line-height: 1;
-        margin: 6px 0;
-    }
-    .score-card .score-lbl {
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.6px;
-        color: var(--sub);
-    }
-    .band-pill {
-        display: inline-block;
-        margin-top: 8px;
-        padding: 5px 14px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.3px;
-    }
-
-    .factor-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 8px 10px;
-        border-radius: 8px;
-        margin-bottom: 4px;
-        font-size: 13px;
-        background: #f8fafc;
-    }
-    .factor-row .fname { font-weight: 600; color: var(--ink); }
-    .factor-row .fval { color: var(--sub); font-size: 11.5px; font-family: 'JetBrains Mono', monospace; }
-    .factor-row .fshap { font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; }
-
-    .empty-state {
-        text-align: center;
-        padding: 60px 20px;
-        color: var(--sub);
-    }
-    .empty-state .icon { font-size: 34px; margin-bottom: 10px; opacity: 0.5; }
-    .empty-state h3 { color: var(--ink); font-size: 15px; margin-bottom: 4px; }
-    .empty-state p { font-size: 12.5px; max-width: 340px; margin: 0 auto; }
-
-    .footnote {
-        font-size: 11px;
-        color: var(--sub);
-        text-align: center;
-        margin-top: 10px;
-        padding: 8px;
-        background: var(--warn-soft);
-        border-radius: 8px;
-        border: 1px solid #fde68a;
-    }
-
-    .nav-hint {
-        font-size: 11.5px;
-        color: var(--accent);
-        background: var(--accent-soft);
-        border: 1px solid #c7d2fe;
-        border-radius: 8px;
-        padding: 8px 12px;
-        margin-bottom: 14px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------
-# Header
-# --------------------------------------------------------------------------
-st.markdown("""
-<div class="app-header">
-    <div class="brand">
-        <div class="mark">◈</div>
-        <div>
-            <h1>Explainable Credit Risk Predictor</h1>
-            <p class="sub">XGBoost model &nbsp;·&nbsp; live SHAP explanations</p>
-        </div>
-    </div>
-    <div class="tag">MODEL-DRIVEN · NOT HARDCODED</div>
-</div>
-""", unsafe_allow_html=True)
-
-# Result is kept in session_state so it survives the rerun that happens
-# when the user switches tabs (Streamlit reruns the whole script on any
-# widget interaction, including a tab click).
-if "result" not in st.session_state:
-    st.session_state["result"] = None
-
-tab_input, tab_result = st.tabs(["① Applicant Profile", "② Risk Assessment"])
-
-# --------------------------------------------------------------------------
-# TAB 1: Applicant input form
-# --------------------------------------------------------------------------
-with tab_input:
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="panel-title">Applicant Profile</div>', unsafe_allow_html=True)
-
-    with st.form("applicant_form"):
-        tab1, tab2 = st.tabs(["Personal & Income", "Credit History"])
-
-        with tab1:
-            age = st.number_input("Age", min_value=18, max_value=110, value=35)
-            monthly_income = st.number_input(
-                "Monthly Income ($)", min_value=0.0, value=4000.0, step=100.0,
-                help="Leave at 0 if unknown; the model will impute a typical value."
-            )
-            dependents = st.number_input("Number of Dependents", min_value=0, value=0)
-            debt_ratio = st.number_input(
-                "Debt Ratio (monthly debt / monthly income)", min_value=0.0,
-                value=0.3, step=0.01
-            )
-
-        with tab2:
-            util = st.slider(
-                "Revolving Credit Utilization (balance / limit)", min_value=0.0, max_value=2.0,
-                value=0.3, step=0.01,
-                help="Total balance on credit cards/lines divided by credit limits."
-            )
-            open_credit_lines = st.number_input("Open Credit Lines & Loans", min_value=0, value=6)
-            real_estate_loans = st.number_input("Real Estate Loans / Lines", min_value=0, value=1)
-
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                late_30_59 = st.number_input("30-59d Late", min_value=0, value=0)
-            with c2:
-                late_60_89 = st.number_input("60-89d Late", min_value=0, value=0)
-            with c3:
-                late_90 = st.number_input("90d+ Late", min_value=0, value=0)
-
-        submitted = st.form_submit_button("Assess Risk →", use_container_width=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    if st.session_state["result"] is not None:
-        st.markdown(
-            '<div class="nav-hint">✓ A risk assessment is ready — open the '
-            '"② Risk Assessment" tab above to view it.</div>',
-            unsafe_allow_html=True,
+    col1, col2 = st.columns(2)
+    with col1:
+        age = st.number_input("Age", min_value=18, max_value=110, value=35)
+        monthly_income = st.number_input(
+            "Monthly Income ($)", min_value=0.0, value=4000.0, step=100.0,
+            help="Leave at 0 if unknown; the model will impute a typical value."
         )
+        util = st.slider(
+            "Revolving Credit Utilization (balance / limit)", min_value=0.0, max_value=2.0,
+            value=0.3, step=0.01,
+            help="Total balance on credit cards/lines divided by credit limits."
+        )
+        debt_ratio = st.number_input(
+            "Debt Ratio (monthly debt payments / monthly income)", min_value=0.0,
+            value=0.3, step=0.01
+        )
+        dependents = st.number_input("Number of Dependents", min_value=0, value=0)
 
-# --------------------------------------------------------------------------
-# Call API (unchanged logic)
-# --------------------------------------------------------------------------
+    with col2:
+        open_credit_lines = st.number_input("Open Credit Lines & Loans", min_value=0, value=6)
+        real_estate_loans = st.number_input("Real Estate Loans / Lines", min_value=0, value=1)
+        late_30_59 = st.number_input("Times 30-59 Days Past Due (last 2y)", min_value=0, value=0)
+        late_60_89 = st.number_input("Times 60-89 Days Past Due (last 2y)", min_value=0, value=0)
+        late_90 = st.number_input("Times 90+ Days Late (last 2y)", min_value=0, value=0)
+
+    submitted = st.form_submit_button("Assess Risk", use_container_width=True)
+
 if submitted:
     payload = {
         "RevolvingUtilizationOfUnsecuredLines": util,
@@ -361,149 +64,85 @@ if submitted:
     }
 
     try:
-        with tab_input:
-            with st.spinner("Scoring applicant..."):
-                resp = requests.post(f"{API_URL}/predict", json=payload, timeout=10)
-                resp.raise_for_status()
-                st.session_state["result"] = resp.json()
+        resp = requests.post(f"{API_URL}/predict", json=payload, timeout=10)
+        resp.raise_for_status()
+        result = resp.json()
     except requests.exceptions.ConnectionError:
-        with tab_input:
-            st.error(
-                f"Could not reach the API at {API_URL}. Make sure it's running:\n\n"
-                "`uvicorn api:app --reload --port 8000`"
-            )
+        st.error(
+            f"Could not reach the API at {API_URL}. Make sure it's running:\n\n"
+            "`uvicorn api:app --reload --port 8000`"
+        )
         st.stop()
     except requests.exceptions.HTTPError as e:
-        with tab_input:
-            st.error(f"API returned an error: {e}\n\n{resp.text}")
+        st.error(f"API returned an error: {e}\n\n{resp.text}")
         st.stop()
 
-result = st.session_state["result"]
+    st.divider()
+    st.subheader("Result")
 
-# --------------------------------------------------------------------------
-# TAB 2: Results
-# --------------------------------------------------------------------------
-with tab_result:
-    if result is None:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="panel-title">Risk Assessment</div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="empty-state">
-            <div class="icon">◈</div>
-            <h3>No assessment yet</h3>
-            <p>Go to the "① Applicant Profile" tab, fill in the applicant
-            details, and click "Assess Risk" to generate a live prediction
-            with a full SHAP-based explanation.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    else:
-        risk_score = result["risk_score"]
-        risk_band = result["risk_band"]
+    risk_score = result["risk_score"]
+    risk_band = result["risk_band"]
 
-        band_style = {
-            "Low":    {"bg": "var(--good-soft)",   "fg": "var(--good)",   "border": "#a7f3d0"},
-            "Medium": {"bg": "var(--warn-soft)",   "fg": "var(--warn)",   "border": "#fde68a"},
-            "High":   {"bg": "var(--danger-soft)", "fg": "var(--danger)", "border": "#fecaca"},
-        }.get(risk_band, {"bg": "#f1f5f9", "fg": "#475569", "border": "#e2e8f0"})
+    band_color = {"Low": "green", "Medium": "orange", "High": "red"}.get(risk_band, "gray")
 
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="panel-title">Risk Assessment</div>', unsafe_allow_html=True)
+    score_col, band_col = st.columns(2)
+    with score_col:
+        st.metric("Predicted Probability of Default", f"{risk_score:.1%}")
+    with band_col:
+        st.markdown(f"### Risk Band: :{band_color}[{risk_band}]")
 
-        m1, m2 = st.columns([0.5, 0.5])
-        with m1:
-            st.markdown(f"""
-            <div class="score-card" style="background:{band_style['bg']}; border-color:{band_style['border']};">
-                <div class="score-lbl">Default Probability</div>
-                <div class="score-num" style="color:{band_style['fg']};">{risk_score:.1%}</div>
-                <span class="band-pill" style="background:{band_style['fg']}; color:white;">{risk_band} Risk</span>
-            </div>
-            """, unsafe_allow_html=True)
-        with m2:
-            st.markdown('<div style="padding-top:6px;">', unsafe_allow_html=True)
-            st.caption("Model baseline (average applicant)")
-            st.progress(min(risk_score, 1.0))
-            st.markdown(
-                f"<div style='font-size:11.5px;color:var(--sub);'>"
-                f"Baseline: {result['base_value']:.1%} &nbsp;→&nbsp; This applicant: "
-                f"<b style='color:{band_style['fg']}'>{risk_score:.1%}</b></div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
+    st.progress(min(risk_score, 1.0))
 
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.subheader("Why this score? (SHAP explanation for this applicant)")
+    st.caption(
+        "Each bar shows how much that specific feature value pushed THIS "
+        "applicant's predicted risk up (red, toward default) or down "
+        "(blue, toward non-default), relative to the model's average "
+        f"baseline prediction of {result['base_value']:.1%}."
+    )
 
-        # Explanation panel
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="panel-title">Why This Score — SHAP Explanation</div>', unsafe_allow_html=True)
-        st.caption(
-            "Each bar shows how much that specific feature value pushed THIS "
-            "applicant's predicted risk up (red) or down (blue), relative to "
-            f"the model baseline of {result['base_value']:.1%}."
+    top_factors = result["top_factors"]
+    features = [f["feature"] for f in top_factors][::-1]
+    shap_vals = [f["shap_value"] for f in top_factors][::-1]
+    raw_vals = [f["value"] for f in top_factors][::-1]
+    colors = ["#d62728" if v > 0 else "#1f77b4" for v in shap_vals]
+
+    fig, ax = plt.subplots(figsize=(7, 0.6 * len(features) + 1))
+    bars = ax.barh(features, shap_vals, color=colors)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("SHAP value (impact on predicted default probability, log-odds space)")
+    ax.set_title("Top factors driving this prediction")
+
+    for bar, raw_val in zip(bars, raw_vals):
+        width = bar.get_width()
+        label = f"{raw_val}"
+        ax.text(
+            width + (0.02 if width >= 0 else -0.02),
+            bar.get_y() + bar.get_height() / 2,
+            f"value={label}",
+            va="center",
+            ha="left" if width >= 0 else "right",
+            fontsize=9,
         )
 
-        top_factors = result["top_factors"]
-        features = [f["feature"] for f in top_factors][::-1]
-        shap_vals = [f["shap_value"] for f in top_factors][::-1]
-        raw_vals = [f["value"] for f in top_factors][::-1]
-        colors = ["#dc2626" if v > 0 else "#4338ca" for v in shap_vals]
+    st.pyplot(fig)
 
-        fig, ax = plt.subplots(figsize=(6.2, 0.5 * len(features) + 0.8))
-        fig.patch.set_alpha(0)
-        ax.set_facecolor("none")
-        bars = ax.barh(features, shap_vals, color=colors, height=0.6)
-        ax.axvline(0, color="#94a3b8", linewidth=0.8)
-        ax.set_xlabel("SHAP value (log-odds impact)", fontsize=9, color="#64748b")
-        ax.tick_params(labelsize=9, colors="#334155")
-        for spine in ["top", "right", "left"]:
-            ax.spines[spine].set_visible(False)
-        ax.spines["bottom"].set_color("#cbd5e1")
+    with st.expander("See all feature contributions"):
+        all_factors = sorted(result["all_factors"], key=lambda f: abs(f["shap_value"]), reverse=True)
+        for f in all_factors:
+            arrow = "🔺 increases risk" if f["shap_value"] > 0 else "🔻 decreases risk"
+            st.write(f"**{f['feature']}** = {f['value']}  →  {arrow} (SHAP = {f['shap_value']:+.4f})")
 
-        for bar, raw_val in zip(bars, raw_vals):
-            width = bar.get_width()
-            ax.text(
-                width + (0.02 if width >= 0 else -0.02),
-                bar.get_y() + bar.get_height() / 2,
-                f"{raw_val}",
-                va="center",
-                ha="left" if width >= 0 else "right",
-                fontsize=8.5,
-                color="#475569",
-            )
+    st.caption(
+        "This explanation is generated fresh for every prediction using "
+        "shap.TreeExplainer on the actual trained XGBoost model — it is "
+        "not a static or precomputed importance ranking."
+    )
 
-        plt.tight_layout()
-        st.pyplot(fig, use_container_width=True)
-
-        with st.expander("See all feature contributions"):
-            all_factors = sorted(result["all_factors"], key=lambda f: abs(f["shap_value"]), reverse=True)
-            for f in all_factors:
-                is_up = f["shap_value"] > 0
-                arrow = "▲" if is_up else "▼"
-                color = "#dc2626" if is_up else "#4338ca"
-                st.markdown(f"""
-                <div class="factor-row">
-                    <div>
-                        <span class="fname">{f['feature']}</span>
-                        <span class="fval">&nbsp;= {f['value']}</span>
-                    </div>
-                    <div class="fshap" style="color:{color};">{arrow} {f['shap_value']:+.4f}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        st.markdown(
-            "<div style='font-size:11px;color:var(--sub);margin-top:8px;'>"
-            "Generated fresh per prediction via <code>shap.TreeExplainer</code> "
-            "on the trained XGBoost model — not a static importance ranking."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown("""
-<div class="footnote">
-⚠️ If the backend is running against the bundled synthetic validation dataset
-(no <code>data/credit_data.csv</code> present), scores and explanations reflect
-that synthetic data only — for pipeline demonstration purposes, not real
-credit risk assessment.
-</div>
-""", unsafe_allow_html=True)
+st.divider()
+st.caption(
+    "⚠️ If the backend is currently running against the bundled synthetic "
+    "validation dataset (no data/credit_data.csv present), scores and "
+    "explanations reflect that synthetic data only and are for pipeline "
+    "demonstration purposes, not real credit risk assessment."
+)
